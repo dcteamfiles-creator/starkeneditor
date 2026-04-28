@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>SX Verifizierung · Stärkenkompass</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="verify-bg">
+<main class="verify-card">
+  <h1>Stärken-Exposé Verifizierung</h1>
+  <div id="result" class="muted">Lade…</div>
+  <p class="footer-text">stärkenkompass.de — Multi-Source-Feedback Audits</p>
+</main>
+<script>
+const id = new URLSearchParams(location.search).get('id');
+const out = document.getElementById('result');
+if (!id) { out.textContent = 'Keine Prüfnummer angegeben.'; }
+else {
+  fetch('/api/records').then(r => r.json()).then(recs => {
+    const found = recs.find(rec => (rec.payload?.pruefnummer || '').replace(/^#/,'') === id);
+    if (found) {
+      out.innerHTML = `<div class="verified">
+        <h2>✓ Verifiziert</h2>
+        <p><strong>${found.payload.person_name}</strong></p>
+        <p>Prüfnummer: <code>#${id}</code></p>
+        <p>Ausgestellt: ${(found.created_at||'').slice(0,10)}</p>
+        <p>Stärkenkompass · Multi-Source-Feedback Gutachten</p>
+      </div>`;
+    } else {
+      out.innerHTML = `<div class="not-found">⚠ Prüfnummer <code>#${id}</code> nicht im System gefunden.</div>`;
+    }
+  }).catch(() => out.textContent = 'Verifizierung nicht möglich (öffentlicher Zugriff erfordert öffentliche Verify-API).');
+}
+</script>
+</body>
+</html>

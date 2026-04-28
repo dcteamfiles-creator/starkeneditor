@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Bulk-Queue · Stärkenkompass</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="editor-bg">
+<header class="topbar">
+  <div class="brand-row">
+    <div class="brand-mark"><span class="x-icon">✕</span><span>Stärkenkompass</span></div>
+    <span class="dot">·</span>
+    <span class="page-title">Bulk-Queue für Canva-Export</span>
+  </div>
+  <nav>
+    <a href="/editor">Editor</a>
+    <a href="/bulk-queue" class="active">Bulk-Queue</a>
+    <a href="/overview">Audit-Log</a>
+    <button id="logout" class="btn-link">Abmelden</button>
+  </nav>
+</header>
+
+<main class="overview-main">
+  <div class="bulk-header">
+    <h2>Wartende SX <span id="count" class="muted"></span></h2>
+    <div>
+      <button id="export-csv" class="primary big">CSV für Canva exportieren</button>
+    </div>
+  </div>
+  <p class="muted">Alle SX hier werden beim CSV-Export in eine Tabelle geschrieben, die du in Canva Bulk Create hochladen kannst.</p>
+
+  <table id="queue-table" class="records">
+    <thead>
+      <tr><th>Erstellt</th><th>Person</th><th>Prüfnummer</th><th>Sponsor</th><th>Status</th><th>Bearbeiter</th><th></th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <div id="empty-state" class="empty-state" style="display:none">
+    <p class="muted">Noch keine SX in der Queue.<br>Wechsel zum <a href="/editor">Editor</a> und füge welche hinzu.</p>
+  </div>
+
+  <div class="canva-howto">
+    <h3>So nutzt du die exportierte CSV in Canva</h3>
+    <ol>
+      <li>Klick "CSV für Canva exportieren" → Download startet</li>
+      <li>Canva öffnen, dein SX-Design öffnen</li>
+      <li><em>Apps → Bulk Create</em></li>
+      <li>CSV hochladen → "Continue"</li>
+      <li>Pro Variablen-Element (Text/Bild) im Design die passende CSV-Spalte verbinden</li>
+      <li>"Generate Designs" → Canva produziert ein PDF pro Zeile</li>
+      <li><em>Download → PDF Print → ZIP</em> mit allen pixel-perfekten SX</li>
+    </ol>
+    <p class="muted"><strong>Wichtig</strong>: Die Bild-URLs (Sponsor, Signaturen, Logos) zeigen auf <code id="public-url">deine deployte App</code>. Stelle sicher, dass diese URL öffentlich erreichbar ist (Canva muss die Bilder laden können).</p>
+  </div>
+</main>
+
+<script>
+async function load() {
+  const r = await fetch('/api/bulk-queue');
+  if (!r.ok) { location.href = '/'; return; }
+  const list = (await r.json()).reverse();
+  const pending = list.filter(e => e.status !== 'exported');
+  const tbody = document.querySelector('#queue-table tbody');
+  tbody.innerHTML = '';
+  document.getElementById('count').textContent = `(${pending.length} wartend, ${list.length - pending.length} bereits exportiert)`;
+  document.getElementById('empty-state').style.display = list.length === 0 ? 'block' : 'none';
+  document.getElementById('queue-table').style.display = list.length === 0 ? 'none' : 'table';
+
+  for (const e of list) {
+    const tr = document.createElement('tr');
+    const p = e.payload || {};
+    const isExported = e.status === 'exported';
+    tr.innerHTML = `
+      <td>${(e.created_at || '').slice(0,16).replace('T',' ')}</td>
+      <td><strong>${p.person_name || ''}</strong></td>
+      <td>${p.pruefnummer || ''}</td>
+      <td>${p.sponsor_name || '—'}</td>
+      <td><span class="status-${e.status}">${isExported ? 'exportiert' : 'wartend'}</span></td>
+      <td>${e.created_by || ''}</td>
+      <td>${isExported ? '' : `<button data-id="${e.id}" class="del secondary">Löschen</button>`}</td>`;
+    tbody.appendChild(tr);
+  }
+  tbody.querySelectorAll('.del').forEach(b => b.onclick = async (ev) => {
+    if (!confirm('Diesen SX-Eintrag aus der Queue löschen?')) return;
+    await fetch('/api/bulk-queue/' + ev.target.dataset.id, {method:'DELETE'});
+    load();
+  });
+}
+
+document.getElementById('export-csv').onclick = async () => {
+  const r = await fetch('/api/export-csv');
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({error: 'unknown'}));
+    alert('Export fehlgeschlagen: ' + (j.error || r.statusText));
+    return;
+  }
+  const blob = await r.blob();
+  const cd = r.headers.get('Content-Disposition') || '';
+  const m = cd.match(/filename="([^"]+)"/);
+  const fname = m ? m[1] : 'sx-bulk.csv';
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = fname;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  setTimeout(load, 500);
+};
+
+document.getElementById('logout').onclick = async () => {
+  await fetch('/api/logout', {method:'POST'});
+  location.href = '/';
+};
+
+document.getElementById('public-url').textContent = location.origin;
+load();
+</script>
+</body>
+</html>

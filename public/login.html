@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>SX Editor · Stärkenkompass</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="login-bg">
+  <main class="login-card">
+    <div class="logo-area">
+      <div class="logo-mark">
+        <span class="x-icon">✕</span>
+        <span>Stärkenkompass</span>
+      </div>
+      <span class="badge-row" style="margin-top: 10px">SX Editor</span>
+      <h1>Willkommen zurück</h1>
+      <p class="subline">Erstelle hochwertige Stärken-Exposés in Minuten — auf editor.staerkenkompass.de.</p>
+    </div>
+
+    <form id="login-form">
+      <label>Nutzername
+        <input name="username" autocomplete="username" required autofocus placeholder="z. B. Content1">
+      </label>
+      <label>Passwort
+        <input name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit">Anmelden</button>
+      <div id="msg" class="msg"></div>
+    </form>
+
+    <div class="login-footer">
+      Brauchst du Zugang? Schreib an <a href="mailto:torben@staerkenkompass.de">torben@staerkenkompass.de</a>
+    </div>
+  </main>
+
+<script>
+const f = document.getElementById('login-form');
+const msg = document.getElementById('msg');
+f.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  msg.textContent = '';
+  const data = Object.fromEntries(new FormData(f));
+  const r = await fetch('/api/login', {method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)});
+  const j = await r.json();
+  if (j.ok) location.href = '/editor';
+  else msg.textContent = j.error || 'Login fehlgeschlagen';
+});
+</script>
+</body>
+</html>

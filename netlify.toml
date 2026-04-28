@@ -1,0 +1,37 @@
+# Netlify config — STATIC FRONTEND only.
+# Netlify Functions don't support Python, so the PDF rendering backend
+# (server.py / Flask) must run elsewhere (Render.com / Railway / Fly.io).
+# Set BACKEND_URL below to your deployed backend, then redirects route /api → backend.
+
+[build]
+  publish = "public"
+  command = "echo 'static deploy — backend lives elsewhere'"
+
+# Proxy /api/* to the Python backend (set BACKEND_URL in Netlify env)
+[[redirects]]
+  from = "/api/*"
+  to = "https://YOUR-BACKEND.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/uploads/*"
+  to = "https://YOUR-BACKEND.onrender.com/uploads/:splat"
+  status = 200
+  force = true
+
+# SPA-style routes for editor / overview / verify
+[[redirects]]
+  from = "/editor"
+  to = "/editor.html"
+  status = 200
+
+[[redirects]]
+  from = "/overview"
+  to = "/overview.html"
+  status = 200
+
+[[redirects]]
+  from = "/verify"
+  to = "/verify.html"
+  status = 200

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Audit-Log · Stärkenkompass</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="editor-bg">
+<header class="topbar">
+  <div class="brand-row">
+    <div class="brand-mark"><span class="x-icon">✕</span><span>Stärkenkompass</span></div>
+    <span class="dot">·</span>
+    <span class="page-title">Audit-Log: Alle exportierten SX</span>
+  </div>
+  <nav>
+    <a href="/editor">Editor</a>
+    <a href="/bulk-queue">Bulk-Queue</a>
+    <a href="/overview" class="active">Audit-Log</a>
+    <button id="logout" class="btn-link">Abmelden</button>
+  </nav>
+</header>
+
+<main class="overview-main">
+  <h2>Audit-Log</h2>
+  <p class="muted">Vollständiges Protokoll aller in CSV exportierten SX. Wird beim CSV-Export automatisch ergänzt.</p>
+  <table id="records-table" class="records">
+    <thead>
+      <tr><th>Erstellt</th><th>Person</th><th>Prüfnummer</th><th>Sponsor</th><th>Bearbeiter</th><th>CSV-Export</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</main>
+
+<script>
+async function loadRecords() {
+  const r = await fetch('/api/records');
+  if (!r.ok) { location.href = '/'; return; }
+  const recs = (await r.json()).reverse();
+  const tbody = document.querySelector('#records-table tbody');
+  tbody.innerHTML = '';
+  for (const rec of recs) {
+    const tr = document.createElement('tr');
+    const p = rec.payload || {};
+    tr.innerHTML = `<td>${(rec.created_at || '').slice(0,16).replace('T',' ')}</td>
+      <td><strong>${p.person_name || ''}</strong></td>
+      <td>${p.pruefnummer || ''}</td>
+      <td>${p.sponsor_name || '—'}</td>
+      <td>${rec.created_by || ''}</td>
+      <td>${rec.csv_export || ''}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+document.getElementById('logout').onclick = async () => {
+  await fetch('/api/logout', {method:'POST'});
+  location.href = '/';
+};
+loadRecords();
+</script>
+</body>
+</html>

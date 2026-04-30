@@ -1,1 +1,1 @@
-web: gunicorn server:app --bind 0.0.0.0:$PORT --workers 2 --timeout 60
+web: python3 server_stdlib.py

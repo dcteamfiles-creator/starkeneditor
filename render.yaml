@@ -3,8 +3,8 @@ services:
     name: sx-content-app
     runtime: python
     plan: free
-    buildCommand: "pip install -r requirements.txt && python scripts/build_base_pdf.py || true"
-    startCommand: "gunicorn server:app --bind 0.0.0.0:$PORT --workers 2 --timeout 60"
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python3 server_stdlib.py"
     envVars:
       - key: SX_SECRET
         generateValue: true

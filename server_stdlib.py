@@ -48,6 +48,7 @@ DATA.mkdir(parents=True, exist_ok=True)
 ACCOUNTS = {f"Content{i}": f"ToHa{i:02d}" for i in range(1, 10)}
 SECRET = os.environ.get("SX_SECRET", "dev-secret-change-in-production")
 PUBLIC_BASE_URL = os.environ.get("SX_PUBLIC_URL", "http://localhost:8000")
+SESSIONS_FILE = DATA / "sessions.json"
 SESSIONS: dict[str, dict] = {}
 
 # Load .env if present (für ANTHROPIC_API_KEY)
@@ -60,6 +61,23 @@ def _load_env():
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip())
 _load_env()
+
+# Sessions aus Disk laden (überleben Redeploys)
+def _load_sessions():
+    global SESSIONS
+    try:
+        if SESSIONS_FILE.exists():
+            SESSIONS = json.loads(SESSIONS_FILE.read_text())
+    except Exception:
+        SESSIONS = {}
+
+def _save_sessions():
+    try:
+        SESSIONS_FILE.write_text(json.dumps(SESSIONS, ensure_ascii=False))
+    except Exception:
+        pass
+
+_load_sessions()
 
 
 # ─── HELPERS ──────────────────────────────────────────────────────────────
@@ -75,6 +93,7 @@ def get_session(cookie_header):
 def make_session(user):
     sid = secrets.token_hex(24)
     SESSIONS[sid] = {"user": user, "created": time.time()}
+    _save_sessions()
     return sid
 
 
@@ -292,6 +311,7 @@ class Handler(BaseHTTPRequestHandler):
             sid = cookie.get("sxid")
             if sid and sid.value in SESSIONS:
                 del SESSIONS[sid.value]
+                _save_sessions()
             self._json({"ok": True}, headers={"Set-Cookie": "sxid=; Max-Age=0; Path=/"})
             return
 
@@ -338,7 +358,7 @@ class Handler(BaseHTTPRequestHandler):
             fs = cgi.FieldStorage(fp=self.rfile, headers=self.headers,
                                    environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": ctype})
             file_field = fs["file"] if "file" in fs else None
-            if not file_field or not file_field.filename:
+            if file_field is None or not getattr(file_field, "filename", None):
                 self._json({"error": "no file"}, status=400); return
             try:
                 from lib.claude_extractor import extract_from_image, smart_default_mapping
@@ -399,7 +419,7 @@ class Handler(BaseHTTPRequestHandler):
             fs = cgi.FieldStorage(fp=self.rfile, headers=self.headers,
                                    environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": ctype})
             file_field = fs["file"] if "file" in fs else None
-            if not file_field or not file_field.filename:
+            if file_field is None or not getattr(file_field, "filename", None):
                 self._json({"error": "no file"}, status=400); return
             kind = fs.getvalue("kind", "misc")
             suffix = Path(file_field.filename).suffix.lower()

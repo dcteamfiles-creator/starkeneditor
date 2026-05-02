@@ -1,7 +1,7 @@
-// SX Editor — reduzierter Scope (nur 13 Felder)
+// SX Editor v4 — Auto-Gen, Click-Picker, Slider, Progress, PDF-Support
 
 const SECTIONS = [
-  { key: 'positionierung',     de: 'Positionierung',                     en: 'Authentic Value Proposition',  max: 320 },
+  { key: 'positionierung',     de: 'Positionierung',                     en: 'Authentic Value Proposition',  max: 400 },
   { key: 'alleinstellung',     de: 'Alleinstellung',                     en: 'Unfair Advantage',             max: 320 },
   { key: 'fuehrungsstil',      de: 'Führungsstil',                       en: 'Leadership-Impact-Matrix',     max: 280 },
   { key: 'einsatzgebiete',     de: 'Einsatzgebiete',                     en: 'Areas of Personal excellence & flow', max: 320 },
@@ -10,25 +10,34 @@ const SECTIONS = [
   { key: 'unternehmenskultur', de: 'Unternehmenskultur',                 en: 'Culture-Fit Analysis',         max: 280 },
 ];
 
-// State
 const sectionStrengths = {};
 SECTIONS.forEach(s => sectionStrengths[s.key] = []);
-let availableStrengths = [];           // Top 40 nach Vision-Import (alle Stärken kombiniert)
+let availableStrengths = [];
 let dimensions = {AE: [], ED: [], SH: [], WK: []};
+let defaultPromptCache = '';
 
-// ─── TAB SWITCHING ──────────────────────────────────────────────
-document.querySelectorAll('.tab-bar .tab').forEach(tab => {
-  tab.onclick = () => {
-    if (tab.classList.contains('disabled')) {
-      alert('Company SX ist in Entwicklung. Aktuell nur SX verfügbar.');
-      return;
-    }
-    document.querySelectorAll('.tab-bar .tab').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-  };
-});
+// ─── PROGRESS BAR ────────────────────────────────────────────────
+function showProgress(label, indeterminate=true) {
+  const ct = document.getElementById('progress-container');
+  const fill = document.getElementById('progress-fill');
+  const lbl = document.getElementById('progress-label');
+  ct.style.display = 'block';
+  lbl.textContent = label;
+  fill.classList.toggle('indeterminate', indeterminate);
+  if (indeterminate) fill.style.width = '30%';
+}
+function setProgress(percent, label) {
+  const fill = document.getElementById('progress-fill');
+  const lbl = document.getElementById('progress-label');
+  fill.classList.remove('indeterminate');
+  fill.style.width = percent + '%';
+  if (label) lbl.textContent = label;
+}
+function hideProgress() {
+  document.getElementById('progress-container').style.display = 'none';
+}
 
-// ─── BUILD SECTION INPUTS ──────────────────────────────────────
+// ─── BUILD SECTION INPUTS ────────────────────────────────────────
 const secCt = document.getElementById('sections-container');
 SECTIONS.forEach(s => {
   const block = document.createElement('div');
@@ -58,7 +67,6 @@ SECTIONS.forEach(s => {
   });
 });
 
-// Per-section regenerate
 secCt.addEventListener('click', async (ev) => {
   const btn = ev.target.closest('[data-regen]');
   if (!btn) return;
@@ -66,7 +74,7 @@ secCt.addEventListener('click', async (ev) => {
   await generateAllTexts([key]);
 });
 
-// ─── UPLOADS HELPERS ────────────────────────────────────────────
+// ─── UPLOADS HELPERS ─────────────────────────────────────────────
 async function uploadFile(file, kind) {
   const fd = new FormData();
   fd.append('file', file); fd.append('kind', kind);
@@ -76,7 +84,7 @@ async function uploadFile(file, kind) {
   return j.url;
 }
 
-// ─── STÄRKEN-AUSWERTUNG UPLOAD via Vision ───────────────────────
+// ─── AUSWERTUNG-UPLOAD via Vision ───────────────────────────────
 const dropZone = document.getElementById('upload-zone');
 const dropFile = document.getElementById('upload-file');
 const dropStatus = document.getElementById('upload-status');
@@ -94,42 +102,47 @@ async function handleAuswertungUpload(file) {
   dropZone.classList.add('has-file');
   dropZone.querySelector('.dz-title').textContent = `📎 ${file.name}`;
   dropZone.querySelector('.dz-icon').textContent = '⏳';
-  dropStatus.innerHTML = '<span class="status-pill warning">Vision-Extraktion läuft… (10-20 Sek)</span>';
+  dropStatus.innerHTML = '';
+  showProgress('Schritt 1/3: Stärken aus Auswertung extrahieren (~10-20 Sek)…');
 
-  const fd = new FormData();
-  fd.append('file', file); fd.append('kind', 'auswertung');
-  const r = await fetch('/api/import-from-screenshot', {method: 'POST', body: fd});
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({error: 'unknown'}));
-    dropStatus.innerHTML = `<span class="status-pill" style="background:#fceced;color:#c13">⚠ Fehler: ${err.error}</span>`;
+  try {
+    const fd = new FormData();
+    fd.append('file', file); fd.append('kind', 'auswertung');
+    const r = await fetch('/api/import-from-screenshot', {method: 'POST', body: fd});
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({error: 'unknown'}));
+      throw new Error(err.error);
+    }
+    const j = await r.json();
+    document.getElementById('vorname').value = j.vorname || '';
+    document.getElementById('nachname').value = j.nachname || '';
+    dimensions = j.dimensions || {AE: [], ED: [], SH: [], WK: []};
+    availableStrengths = [...new Set([...dimensions.AE, ...dimensions.ED, ...dimensions.SH, ...dimensions.WK])];
+    const sd = j.section_strengths_default || {};
+    Object.keys(sectionStrengths).forEach(k => sectionStrengths[k] = sd[k] || []);
+    renderAllStrengthTags();
+    dropZone.querySelector('.dz-icon').textContent = '✓';
+    dropStatus.innerHTML = `<span class="status-pill success">✓ ${availableStrengths.length} Stärken erkannt · ${j.vorname} ${j.nachname}</span>`;
+    refreshPreview();
+
+    // Auto-Generate: 7 Texte + 3 Header in Series
+    showProgress('Schritt 2/3: 7 Texte generieren (~10-15 Sek)…');
+    await generateAllTexts(null, false);
+    showProgress('Schritt 3/3: 3 Header-Vorschläge generieren (~3-5 Sek)…');
+    await generateHeaders(false);
+    setProgress(100, '✓ Fertig! Alles bereit zum Editieren.');
+    setTimeout(hideProgress, 2000);
+  } catch (e) {
+    hideProgress();
     dropZone.querySelector('.dz-icon').textContent = '⚠';
-    return;
+    dropStatus.innerHTML = `<span class="status-pill" style="background:#fceced;color:#c13">⚠ ${e.message}</span>`;
   }
-  const j = await r.json();
-  // Apply extracted data
-  document.getElementById('vorname').value = j.vorname || '';
-  document.getElementById('nachname').value = j.nachname || '';
-  dimensions = j.dimensions || {AE: [], ED: [], SH: [], WK: []};
-  availableStrengths = [...new Set([...dimensions.AE, ...dimensions.ED, ...dimensions.SH, ...dimensions.WK])];
-  // Smart-default per section
-  const sd = j.section_strengths_default || {};
-  Object.keys(sectionStrengths).forEach(k => sectionStrengths[k] = sd[k] || []);
-  renderAllStrengthTags();
-  dropZone.querySelector('.dz-icon').textContent = '✓';
-  dropStatus.innerHTML = `<span class="status-pill success">✓ ${availableStrengths.length} Stärken erkannt · ${j.vorname} ${j.nachname}</span>
-                          <button type="button" class="secondary" id="auto-generate" style="margin-left:8px;font-size:0.78rem;padding:4px 10px">⚡ Alle Texte + Header automatisch generieren</button>`;
-  document.getElementById('auto-generate').onclick = async () => {
-    await generateAllTexts();
-    await generateHeaders();
-  };
-  refreshPreview();
 }
 
-// ─── STRENGTH-TAG RENDERING (per section) ───────────────────────
+// ─── STRENGTH TAGS PER SEKTION ──────────────────────────────────
 function renderAllStrengthTags() {
   SECTIONS.forEach(s => renderTagsForSection(s.key));
 }
-
 function renderTagsForSection(key) {
   const container = document.querySelector(`.strength-tags[data-strengths-for="${key}"]`);
   if (!container) return;
@@ -143,41 +156,86 @@ function renderTagsForSection(key) {
     const tag = document.createElement('span');
     tag.className = 'strength-tag';
     tag.innerHTML = `${st} <span class="remove">×</span>`;
+    tag.title = 'Klick zum Entfernen';
     tag.onclick = () => {
       sectionStrengths[key] = sectionStrengths[key].filter(x => x !== st);
       renderTagsForSection(key);
     };
     container.appendChild(tag);
   }
-  // Add-button
   const add = document.createElement('button');
   add.type = 'button'; add.className = 'add-strength-btn';
   add.textContent = '+ Stärke';
-  add.onclick = () => showStrengthPicker(key);
+  add.onclick = () => openStrengthPicker(key);
   container.appendChild(add);
 }
 
-function showStrengthPicker(key) {
-  const remaining = availableStrengths.filter(s => !sectionStrengths[key].includes(s));
-  if (!remaining.length) { alert('Alle verfügbaren Stärken bereits in dieser Sektion.'); return; }
-  // Simple prompt — könnte später schöner Modal werden
-  const choice = prompt(
-    `Stärke hinzufügen zu "${key}":\n\n` +
-    remaining.map((s, i) => `${i+1}. ${s}`).join('\n') +
-    `\n\nNummer eingeben (1-${remaining.length}):`
-  );
-  const idx = parseInt(choice) - 1;
-  if (idx >= 0 && idx < remaining.length) {
-    sectionStrengths[key].push(remaining[idx]);
-    renderTagsForSection(key);
+// ─── STRENGTH PICKER MODAL ──────────────────────────────────────
+const pickerModal = document.getElementById('picker-modal');
+const pickerTags = document.getElementById('picker-tags');
+const pickerSectionName = document.getElementById('picker-section-name');
+let activePickerSection = null;
+
+function openStrengthPicker(key) {
+  activePickerSection = key;
+  const sec = SECTIONS.find(s => s.key === key);
+  pickerSectionName.textContent = `→ ${sec.de}`;
+  renderPickerTags();
+  pickerModal.style.display = 'flex';
+}
+function renderPickerTags() {
+  pickerTags.innerHTML = '';
+  if (!availableStrengths.length) {
+    pickerTags.innerHTML = '<p class="muted" style="text-align:center;padding:20px;">Noch keine Stärken erkannt — erst Auswertung hochladen.</p>';
+    return;
   }
+  // Group by Dimension
+  const dimGroups = [
+    {label: 'WK · Wissen und Können', items: dimensions.WK || []},
+    {label: 'AE · Auftreten und Erscheinung', items: dimensions.AE || []},
+    {label: 'SH · Sprechen und Handeln', items: dimensions.SH || []},
+    {label: 'ED · Einstellung und Denken', items: dimensions.ED || []},
+  ];
+  for (const g of dimGroups) {
+    if (!g.items.length) continue;
+    const heading = document.createElement('div');
+    heading.style.cssText = 'width:100%; font-size:0.7rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:var(--brand-blue-dk); margin: 8px 0 4px;';
+    heading.textContent = g.label;
+    pickerTags.appendChild(heading);
+    for (const st of g.items) {
+      const isSelected = sectionStrengths[activePickerSection].includes(st);
+      const tag = document.createElement('span');
+      tag.className = 'strength-tag' + (isSelected ? ' disabled' : '');
+      tag.textContent = st + (isSelected ? ' ✓' : '');
+      tag.onclick = () => {
+        if (!isSelected) {
+          sectionStrengths[activePickerSection].push(st);
+          renderPickerTags();
+        }
+      };
+      pickerTags.appendChild(tag);
+    }
+  }
+}
+document.getElementById('picker-close').onclick = () => closePickerModal();
+document.getElementById('picker-done').onclick = () => closePickerModal();
+pickerModal.addEventListener('click', e => { if (e.target === pickerModal) closePickerModal(); });
+function closePickerModal() {
+  pickerModal.style.display = 'none';
+  if (activePickerSection) renderTagsForSection(activePickerSection);
+  activePickerSection = null;
 }
 
 // ─── KI: Texte generieren ───────────────────────────────────────
-async function generateAllTexts(onlyKeys = null) {
+async function generateAllTexts(onlyKeys = null, withProgress = true) {
   if (!availableStrengths.length) { alert('Erst Auswertung hochladen.'); return; }
   const btn = document.getElementById('generate-all-texts');
-  if (btn && !onlyKeys) { btn.disabled = true; btn.textContent = '⏳ Generiere 7 Texte… (~10 Sek)'; }
+  if (!onlyKeys && btn) { btn.disabled = true; btn.textContent = '⏳ Generiere 7 Texte… (~15 Sek)'; }
+  if (onlyKeys) onlyKeys.forEach(k => {
+    const block = secCt.querySelector(`[data-key="${k}"]`);
+    if (block) block.classList.add('generating');
+  });
+  if (withProgress) showProgress('Generiere 7 Texte mit Claude…');
   try {
     const r = await fetch('/api/generate-texts', {
       method: 'POST',
@@ -186,12 +244,12 @@ async function generateAllTexts(onlyKeys = null) {
         section_strengths: sectionStrengths,
         vorname: document.getElementById('vorname').value,
         nachname: document.getElementById('nachname').value,
-        prompt_override: document.getElementById('prompt_override').value || null,
+        system_prompt: document.getElementById('system_prompt').value || null,
       }),
     });
     if (!r.ok) {
       const err = await r.json().catch(() => ({error:'unknown'}));
-      alert('KI-Fehler: ' + err.error); return;
+      throw new Error(err.error);
     }
     const j = await r.json();
     Object.entries(j.sections).forEach(([k, txt]) => {
@@ -203,20 +261,26 @@ async function generateAllTexts(onlyKeys = null) {
       }
     });
   } catch (e) {
-    alert('Fehler: ' + e.message);
+    alert('KI-Fehler: ' + e.message);
   } finally {
-    if (btn && !onlyKeys) { btn.disabled = false; btn.textContent = '⚡ Alle 7 Texte generieren (Claude API)'; }
+    if (!onlyKeys && btn) { btn.disabled = false; btn.textContent = '⚡ Alle 7 Texte generieren'; }
+    if (onlyKeys) onlyKeys.forEach(k => {
+      const block = secCt.querySelector(`[data-key="${k}"]`);
+      if (block) block.classList.remove('generating');
+    });
+    if (withProgress) hideProgress();
   }
   refreshPreview();
 }
 
 document.getElementById('generate-all-texts').onclick = () => generateAllTexts();
 
-// ─── KI: Header-Alternativen ────────────────────────────────────
-async function generateHeaders() {
+// ─── KI: Header ─────────────────────────────────────────────────
+async function generateHeaders(withProgress = true) {
   if (!availableStrengths.length) { alert('Erst Auswertung hochladen.'); return; }
   const btn = document.getElementById('generate-headers');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Generiere…'; }
+  if (withProgress) showProgress('Generiere 3 Header-Varianten…');
   try {
     const r = await fetch('/api/generate-headers', {
       method: 'POST',
@@ -228,14 +292,15 @@ async function generateHeaders() {
     });
     if (!r.ok) {
       const err = await r.json().catch(() => ({error:'unknown'}));
-      alert('Header-Fehler: ' + err.error); return;
+      throw new Error(err.error);
     }
     const j = await r.json();
     renderHeaderAlts(j.alternatives || []);
   } catch (e) {
-    alert('Fehler: ' + e.message);
+    alert('Header-Fehler: ' + e.message);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '⚡ 3 Header-Varianten generieren'; }
+    if (withProgress) hideProgress();
   }
 }
 
@@ -271,6 +336,37 @@ document.getElementById('claim-prn').onclick = async () => {
   refreshPreview();
 };
 
+// ─── SYSTEM-PROMPT EDITOR ───────────────────────────────────────
+async function loadDefaultPrompt() {
+  const r = await fetch('/api/default-prompt');
+  if (!r.ok) return;
+  const j = await r.json();
+  defaultPromptCache = j.prompt || '';
+  const ta = document.getElementById('system_prompt');
+  if (!ta.value) ta.value = defaultPromptCache;
+}
+document.getElementById('reset-prompt').onclick = () => {
+  if (confirm('Prompt auf Default zurücksetzen?')) {
+    document.getElementById('system_prompt').value = defaultPromptCache;
+  }
+};
+
+// ─── PREVIEW SIZE SLIDER ───────────────────────────────────────
+const slider = document.getElementById('preview-size');
+const grid = document.getElementById('editor-grid');
+function applyPreviewSize() {
+  const v = parseInt(slider.value);
+  grid.classList.remove('preview-collapsed', 'preview-narrow', 'preview-wide');
+  if (v <= 5) grid.classList.add('preview-collapsed');
+  else if (v < 35) grid.classList.add('preview-narrow');
+  else if (v > 65) grid.classList.add('preview-wide');
+  // 35-65 = default 50/50 grid
+  localStorage.setItem('sx-preview-size', v);
+}
+slider.addEventListener('input', applyPreviewSize);
+const savedSize = localStorage.getItem('sx-preview-size');
+if (savedSize !== null) slider.value = savedSize;
+
 // ─── PAYLOAD ────────────────────────────────────────────────────
 function getPayload() {
   const sections = {};
@@ -285,7 +381,7 @@ function getPayload() {
     pruefnummer: document.getElementById('pruefnummer').value,
     feedback_count: parseInt(document.getElementById('feedback_count').value) || 3,
     date: document.getElementById('date').value || null,
-    prompt_override: document.getElementById('prompt_override').value || null,
+    system_prompt: document.getElementById('system_prompt').value || null,
     section_strengths: sectionStrengths,
     dimensions: dimensions,
     sections,
@@ -316,7 +412,7 @@ function refreshPreview() {
       <div><strong>Feedbacks:</strong> ${p.feedback_count || 3}</div>
       <div><strong>Datum:</strong> ${p.date || '(heute)'}</div>
     </div>
-    <div class="prev-header">${p.header || '<em class="muted">(Affirmation Header — Schritt 4)</em>'}</div>
+    <div class="prev-header">${p.header || '<em class="muted">(Affirmation Header — Schritt 5)</em>'}</div>
     <div class="prev-sections">${sections}</div>
     <p class="muted" style="margin-top:14px;font-size:0.78rem;text-align:center;">
       Sponsor &amp; Schirmherren werden in Canva manuell ergänzt.
@@ -327,7 +423,7 @@ function refreshPreview() {
 ['vorname', 'nachname', 'email', 'header', 'pruefnummer', 'feedback_count', 'date']
   .forEach(id => document.getElementById(id).addEventListener('input', refreshPreview));
 
-// ─── ADD TO BULK QUEUE ──────────────────────────────────────────
+// ─── FREIGEBEN ─────────────────────────────────────────────────
 document.getElementById('add-to-queue').onclick = async () => {
   const payload = getPayload();
   const errors = [];
@@ -349,11 +445,14 @@ document.getElementById('add-to-queue').onclick = async () => {
   if (confirm('Formular für nächstes SX leeren?')) resetForm();
 };
 
-document.getElementById('reset-form').onclick = () => { if (confirm('Formular leeren?')) resetForm(); };
+document.getElementById('reset-form').onclick = () => { if (confirm('Formular leeren? (Prompt + Größen-Einstellung bleiben)')) resetForm(); };
 
 function resetForm() {
   document.querySelectorAll('input, textarea').forEach(el => {
-    if (el.type !== 'hidden' && el.id !== 'feedback_count') el.value = '';
+    if (el.type === 'hidden') return;
+    if (el.id === 'feedback_count') return;
+    if (el.id === 'system_prompt') return;
+    el.value = '';
   });
   document.getElementById('feedback_count').value = '3';
   Object.keys(sectionStrengths).forEach(k => sectionStrengths[k] = []);
@@ -364,7 +463,8 @@ function resetForm() {
   dropZone.querySelector('.dz-title').textContent = 'PDF oder Screenshot hier ablegen';
   dropZone.querySelector('.dz-icon').textContent = '📊';
   dropStatus.innerHTML = '';
-  document.getElementById('header-alts').innerHTML = '<div class="header-alt placeholder muted" style="text-align:center;font-style:italic">Lade die Auswertung hoch — Vorschläge erscheinen hier.</div>';
+  hideProgress();
+  document.getElementById('header-alts').innerHTML = '<div class="header-alt placeholder muted" style="text-align:center;font-style:italic">Erst Auswertung hochladen — Vorschläge erscheinen hier.</div>';
   refreshPreview();
 }
 
@@ -373,7 +473,6 @@ document.getElementById('logout').onclick = async () => {
   location.href = '/';
 };
 
-// ─── INIT ───────────────────────────────────────────────────────
 async function updateQueueCount() {
   try {
     const r = await fetch('/api/bulk-queue');
@@ -383,7 +482,10 @@ async function updateQueueCount() {
   } catch {}
 }
 
+// ─── INIT ───────────────────────────────────────────────────────
 (async () => {
+  applyPreviewSize();
+  await loadDefaultPrompt();
   await updateQueueCount();
   refreshPreview();
 })();

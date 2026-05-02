@@ -48,10 +48,7 @@ DATA.mkdir(parents=True, exist_ok=True)
 ACCOUNTS = {f"Content{i}": f"ToHa{i:02d}" for i in range(1, 10)}
 SECRET = os.environ.get("SX_SECRET", "dev-secret-change-in-production")
 PUBLIC_BASE_URL = os.environ.get("SX_PUBLIC_URL", "http://localhost:8000")
-SESSIONS_FILE = DATA / "sessions.json"
-SESSIONS: dict[str, dict] = {}
-
-# Load .env if present (für ANTHROPIC_API_KEY)
+# Load .env if present
 def _load_env():
     env = ROOT / ".env"
     if env.exists():
@@ -62,39 +59,47 @@ def _load_env():
                 os.environ.setdefault(k.strip(), v.strip())
 _load_env()
 
-# Sessions aus Disk laden (überleben Redeploys)
-def _load_sessions():
-    global SESSIONS
-    try:
-        if SESSIONS_FILE.exists():
-            SESSIONS = json.loads(SESSIONS_FILE.read_text())
-    except Exception:
-        SESSIONS = {}
+# Re-read SECRET after .env loaded (für stable signed cookies über Redeploys)
+SECRET = os.environ.get("SX_SECRET", SECRET)
 
-def _save_sessions():
-    try:
-        SESSIONS_FILE.write_text(json.dumps(SESSIONS, ensure_ascii=False))
-    except Exception:
-        pass
-
-_load_sessions()
+# Sessions als HMAC-signed cookies (kein Server-State, überlebt jeden Redeploy/Cold-Start)
+SESSION_TTL_SECS = 30 * 24 * 3600   # 30 Tage
 
 
 # ─── HELPERS ──────────────────────────────────────────────────────────────
+def _sign(data: str) -> str:
+    return hmac.new(SECRET.encode(), data.encode(), "sha256").hexdigest()[:32]
+
+
+def make_session(user: str) -> str:
+    """Signed cookie value: 'user|expiry|signature'."""
+    expiry = int(time.time()) + SESSION_TTL_SECS
+    payload = f"{user}|{expiry}"
+    return f"{payload}|{_sign(payload)}"
+
+
 def get_session(cookie_header):
     if not cookie_header:
         return None
     cookie = SimpleCookie()
     cookie.load(cookie_header)
     sid = cookie.get("sxid")
-    return SESSIONS.get(sid.value) if sid else None
-
-
-def make_session(user):
-    sid = secrets.token_hex(24)
-    SESSIONS[sid] = {"user": user, "created": time.time()}
-    _save_sessions()
-    return sid
+    if not sid:
+        return None
+    parts = sid.value.split("|")
+    if len(parts) != 3:
+        return None
+    user, expiry_str, sig = parts
+    try:
+        if int(expiry_str) < time.time():
+            return None
+        if not hmac.compare_digest(sig, _sign(f"{user}|{expiry_str}")):
+            return None
+        if user not in ACCOUNTS:
+            return None
+        return {"user": user}
+    except Exception:
+        return None
 
 
 def load_json(path: Path, default):
@@ -240,6 +245,15 @@ class Handler(BaseHTTPRequestHandler):
             sess = self._session()
             self._json({"user": sess.get("user") if sess else None}); return
 
+        if path == "/api/default-prompt":
+            if not self._require_auth(): return
+            try:
+                from lib.claude_extractor import DEFAULT_SYSTEM_PROMPT
+                self._json({"prompt": DEFAULT_SYSTEM_PROMPT})
+            except Exception as e:
+                self._json({"error": str(e)}, status=500)
+            return
+
         if path == "/api/bulk-queue":
             if not self._require_auth(): return
             self._json(load_json(BULK_QUEUE_FILE, [])); return
@@ -309,9 +323,8 @@ class Handler(BaseHTTPRequestHandler):
             cookie = SimpleCookie()
             cookie.load(self.headers.get("Cookie", ""))
             sid = cookie.get("sxid")
-            if sid and sid.value in SESSIONS:
-                del SESSIONS[sid.value]
-                _save_sessions()
+            # Signed cookies sind stateless — kein Server-State zum Löschen.
+            # Cookie löschen reicht.
             self._json({"ok": True}, headers={"Set-Cookie": "sxid=; Max-Age=0; Path=/"})
             return
 
@@ -361,14 +374,16 @@ class Handler(BaseHTTPRequestHandler):
             if file_field is None or not getattr(file_field, "filename", None):
                 self._json({"error": "no file"}, status=400); return
             try:
-                from lib.claude_extractor import extract_from_image, smart_default_mapping
+                from lib.claude_extractor import (
+                    extract_from_image, extract_from_pdf, smart_default_mapping
+                )
                 img_bytes = file_field.file.read()
                 fname = file_field.filename.lower()
-                mime = "image/png" if fname.endswith(".png") else "image/jpeg" if fname.endswith((".jpg", ".jpeg")) else "image/png"
-                # PDFs konvertieren wir zu Bild im Renderer; für jetzt: nur PNG/JPG.
                 if fname.endswith(".pdf"):
-                    self._json({"error": "PDF noch nicht unterstützt — bitte Screenshot als PNG/JPG"}, status=400); return
-                extracted = extract_from_image(img_bytes, mime_type=mime)
+                    extracted = extract_from_pdf(img_bytes)
+                else:
+                    mime = "image/jpeg" if fname.endswith((".jpg", ".jpeg")) else "image/png"
+                    extracted = extract_from_image(img_bytes, mime_type=mime)
                 section_strengths = smart_default_mapping(extracted)
                 self._json({
                     "vorname": extracted.get("vorname", ""),
@@ -389,8 +404,9 @@ class Handler(BaseHTTPRequestHandler):
                 section_strengths = body.get("section_strengths", {})
                 vorname = body.get("vorname", "")
                 nachname = body.get("nachname", "")
-                custom_prompt = body.get("prompt_override") or self._get_user_prompt()
-                texts = generate_section_texts(section_strengths, vorname, nachname, custom_prompt)
+                # System-Prompt vom Editor (oben). Wenn leer/fehlt → Default.
+                system_prompt = body.get("system_prompt") or None
+                texts = generate_section_texts(section_strengths, vorname, nachname, system_prompt)
                 self._json({"sections": texts})
             except Exception as e:
                 import traceback; traceback.print_exc()
